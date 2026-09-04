@@ -178,4 +178,76 @@ class LoginBoxCustomizationTest {
     }
 
     // endregion
+
+    // MARK: sign-up redirect
+
+    @Test
+    fun `sign-up url alone is enough to build a script`() {
+        val script = LoginBoxCustomization.script(null, null, "https://app.example.com/sign_up/select")
+
+        assertNotNull(script)
+        assertTrue(script!!.contains("https://app.example.com/sign_up/select"))
+        assertTrue(script.contains("[data-test-id=\"redirect-to-signup\"]"))
+    }
+
+    @Test
+    fun `sign-up url is null when absent`() {
+        val script = LoginBoxCustomization.script(
+            null,
+            mapOf("en" to mapOf("loginBox" to mapOf("login" to mapOf("title" to "Sign-in"))))
+        )
+
+        assertNotNull(script)
+        assertTrue(script!!.contains("var SIGN_UP_URL = null;"))
+    }
+
+    @Test
+    fun `non-http schemes are rejected`() {
+        listOf(
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "myapp://sign_up"
+        ).forEach {
+            assertNull("expected $it to be rejected", LoginBoxCustomization.sanitizedSignUpUrl(it))
+        }
+    }
+
+    @Test
+    fun `relative and empty urls are rejected`() {
+        assertNull(LoginBoxCustomization.sanitizedSignUpUrl("/users/sign_up/select"))
+        assertNull(LoginBoxCustomization.sanitizedSignUpUrl(""))
+        assertNull(LoginBoxCustomization.sanitizedSignUpUrl(null))
+    }
+
+    @Test
+    fun `http and https are accepted`() {
+        assertEquals(
+            "https://app.example.com/x",
+            LoginBoxCustomization.sanitizedSignUpUrl("https://app.example.com/x")
+        )
+        assertEquals(
+            "http://localhost:3000/x",
+            LoginBoxCustomization.sanitizedSignUpUrl("http://localhost:3000/x")
+        )
+    }
+
+    @Test
+    fun `a rejected url does not produce a sign-up only script`() {
+        assertNull(LoginBoxCustomization.script(null, null, "javascript:alert(1)"))
+    }
+
+    @Test
+    fun `overrides and redirect coexist`() {
+        val script = LoginBoxCustomization.script(
+            mapOf("loginBox" to mapOf("palette" to mapOf("primary" to mapOf("main" to "#3F6655")))),
+            mapOf("en" to mapOf("loginBox" to mapOf("login" to mapOf("signUpLink" to "Sign up now")))),
+            "https://app.example.com/sign_up"
+        )
+
+        assertNotNull(script)
+        assertTrue(script!!.contains("#3F6655"))
+        assertTrue(script.contains("Sign up now"))
+        assertTrue(script.contains("https://app.example.com/sign_up"))
+    }
 }

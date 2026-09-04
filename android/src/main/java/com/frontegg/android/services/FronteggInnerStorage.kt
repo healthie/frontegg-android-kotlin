@@ -58,6 +58,21 @@ class FronteggInnerStorage {
             volatileLoginBoxLocalizations = value
         }
 
+    /**
+     * Absolute `http(s)` URL the login box's sign-up link should open instead of the
+     * box's own sign-up route, for hosts that own their sign-up flow. `null` clears it.
+     *
+     * Only takes effect alongside [loginBoxLocalizations]
+     * (`loginBox.login.signUpLink` / `signUpMessage`), which is what makes the link
+     * render, and the box additionally requires `allowSignups` on the environment's
+     * public policy. Non-`http(s)` values are ignored.
+     */
+    var loginBoxSignUpUrl: String?
+        get() = volatileLoginBoxSignUpUrl
+        set(value) {
+            volatileLoginBoxSignUpUrl = value
+        }
+
     val handleLoginWithSSO: Boolean
         get() = data["handleLoginWithSSO"] as Boolean? ?: false
     val shouldPromptSocialLoginConsent: Boolean
@@ -138,5 +153,8 @@ class FronteggInnerStorage {
 
         @Volatile
         private var volatileLoginBoxLocalizations: Map<String, Any?>? = null
+
+        @Volatile
+        private var volatileLoginBoxSignUpUrl: String? = null
     }
 }
