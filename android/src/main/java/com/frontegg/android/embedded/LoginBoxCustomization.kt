@@ -1,5 +1,8 @@
 package com.frontegg.android.embedded
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
@@ -31,6 +34,11 @@ object LoginBoxCustomization {
     /** Substring identifying the login box's own metadata request. */
     const val METADATA_PATH = "/frontegg/metadata?entityName=adminBox"
 
+    /** Schemes that can execute script or read local data; never admissible. */
+    private val DENIED_SCHEMES = setOf(
+        "javascript", "data", "file", "blob", "about", "vbscript", "intent", "content"
+    )
+
     /**
      * Registers the overrides script, if the host set any. No-op (with a warning) on legacy
      * WebViews without [WebViewFeature.DOCUMENT_START_SCRIPT] — the same capability gate
@@ -41,7 +49,7 @@ object LoginBoxCustomization {
             storage.loginBoxThemeOptions,
             storage.loginBoxLocalizations,
             storage.loginBoxSignUpUrl
-        ) ?: return
+        ) { scheme -> hostAppHandles(webView.context, scheme) } ?: return
 
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             Log.w(TAG, "DOCUMENT_START_SCRIPT unsupported; login box overrides not installed")
@@ -61,12 +69,27 @@ object LoginBoxCustomization {
     }
 
     /**
-     * Accepts only absolute `http(s)` URLs.
+     * Accepts an absolute `http(s)` URL, or a URL on a scheme the host app itself
+     * declares an intent filter for.
      *
      * The value reaches `location.assign`, so anything else — `javascript:` above all —
-     * is dropped rather than injected.
+     * is dropped rather than injected. A host app is trusted, but this value can
+     * originate in remote configuration on its side, and the cost of the check is
+     * nothing.
+     *
+     * The app-scheme case is what makes a hand-off possible: a host that wants its
+     * sign-up flow presented in its own browser rather than inside this WebView points
+     * `loginBoxSignUpUrl` at its own scheme, and the existing custom-scheme branch opens
+     * it and dismisses the box.
+     *
+     * [handlesScheme] is injected rather than resolved here because, unlike iOS
+     * (`CFBundleURLTypes`), Android exposes no way to ENUMERATE an app's own registered
+     * schemes — only to ask whether anything handles a given one. See [hostAppHandles].
      */
-    internal fun sanitizedSignUpUrl(signUpUrl: String?): String? {
+    internal fun sanitizedSignUpUrl(
+        signUpUrl: String?,
+        handlesScheme: (String) -> Boolean = { false }
+    ): String? {
         if (signUpUrl.isNullOrEmpty()) return null
         val uri = try {
             URI(signUpUrl)
@@ -74,9 +97,38 @@ object LoginBoxCustomization {
             return null
         }
         val scheme = uri.scheme?.lowercase() ?: return null
-        if (scheme != "http" && scheme != "https") return null
-        if (uri.host.isNullOrEmpty()) return null
-        return signUpUrl
+
+        if (scheme == "http" || scheme == "https") {
+            if (uri.host.isNullOrEmpty()) return null
+            return signUpUrl
+        }
+
+        // Denied ahead of the predicate so the guard that actually matters does not
+        // depend on it: `handlesScheme` is supplied by the caller, and a script-executing
+        // scheme must be impossible to admit even through a wrong one.
+        if (scheme in DENIED_SCHEMES) return null
+
+        return if (handlesScheme(scheme)) signUpUrl else null
+    }
+
+    /**
+     * Whether the HOST APP — not some other installed app — declares a browsable VIEW
+     * filter for [scheme].
+     *
+     * Restricted to the host's own package deliberately: any app can claim a scheme, and
+     * accepting a third party's would let remote configuration bounce the user out to it.
+     */
+    internal fun hostAppHandles(context: Context, scheme: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        return try {
+            context.packageManager
+                .queryIntentActivities(intent, 0)
+                .any { it.activityInfo?.packageName == context.packageName }
+        } catch (e: Exception) {
+            Log.w(TAG, "could not resolve handlers for scheme '$scheme'", e)
+            false
+        }
     }
 
     /** `scheme://host[:port]` for [baseUrl], or null when it cannot be parsed. */
@@ -98,7 +150,8 @@ object LoginBoxCustomization {
     fun script(
         themeOptions: Map<String, Any?>?,
         localizations: Map<String, Any?>?,
-        signUpUrl: String? = null
+        signUpUrl: String? = null,
+        handlesScheme: (String) -> Boolean = { false }
     ): String? {
         val overrides = JSONObject()
 
@@ -109,7 +162,10 @@ object LoginBoxCustomization {
             overrides.put("localizations", JSONObject(localizations))
         }
 
-        val redirectUrl = sanitizedSignUpUrl(signUpUrl)
+        val redirectUrl = sanitizedSignUpUrl(signUpUrl, handlesScheme)
+        if (!signUpUrl.isNullOrEmpty() && redirectUrl == null) {
+            Log.w(TAG, "loginBoxSignUpUrl was set but rejected; sign-up link not redirected")
+        }
 
         // Either concern alone is worth injecting for.
         if (overrides.length() == 0 && redirectUrl == null) {

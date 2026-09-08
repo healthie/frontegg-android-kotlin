@@ -237,6 +237,58 @@ class LoginBoxCustomizationTest {
         assertNull(LoginBoxCustomization.script(null, null, "javascript:alert(1)"))
     }
 
+    /**
+     * The hand-off case: a host app pointing the link at its own scheme so the box
+     * dismisses and the app presents sign-up itself. Rejected by default (above), so the
+     * predicate is what admits it — nothing is accepted merely for being custom.
+     */
+    @Test
+    fun `an app-registered scheme is accepted`() {
+        assertEquals(
+            "healthie://sign-up",
+            LoginBoxCustomization.sanitizedSignUpUrl("healthie://sign-up") { it == "healthie" }
+        )
+    }
+
+    @Test
+    fun `a custom scheme the host does not handle is rejected`() {
+        assertNull(
+            LoginBoxCustomization.sanitizedSignUpUrl("otherapp://sign-up") { it == "healthie" }
+        )
+    }
+
+    /**
+     * The security guard must not be delegated. A caller supplying a predicate that
+     * says yes to everything still cannot inject a script-executing scheme.
+     */
+    @Test
+    fun `script schemes stay rejected even when the predicate accepts everything`() {
+        listOf(
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "blob:https://x/y",
+            "about:blank",
+            "vbscript:msgbox",
+            "intent://x#Intent;end",
+            "content://settings/secure"
+        ).forEach {
+            assertNull(
+                "expected $it to be rejected",
+                LoginBoxCustomization.sanitizedSignUpUrl(it) { true }
+            )
+        }
+    }
+
+    @Test
+    fun `an accepted app scheme reaches the script`() {
+        val script = LoginBoxCustomization.script(null, null, "healthie://sign-up") {
+            it == "healthie"
+        }
+        assertNotNull(script)
+        assertTrue(script!!.contains("var SIGN_UP_URL = \"healthie://sign-up\";"))
+    }
+
     @Test
     fun `overrides and redirect coexist`() {
         val script = LoginBoxCustomization.script(
