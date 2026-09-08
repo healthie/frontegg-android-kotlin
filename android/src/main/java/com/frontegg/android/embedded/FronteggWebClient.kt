@@ -458,10 +458,19 @@ class FronteggWebClient(
             // ERR_UNKNOWN_URL_SCHEME and the box just sits there. Unlike iOS, whose
             // WKWebView navigation delegate routes any non-http scheme out to the OS,
             // Android only does what this method says.
+            val isSignUpHandoff = isSignUpHandoffUrl(url)
             if (url.scheme.equals(storage.deepLinkScheme, ignoreCase = true) ||
-                isSignUpHandoffUrl(url)
+                isSignUpHandoff
             ) {
                 val intent = Intent(Intent.ACTION_VIEW, url)
+                if (isSignUpHandoff) {
+                    // Scoped to this app. A custom scheme is not exclusive: any app can
+                    // register it, and several build variants of the same app usually do
+                    // (observed as an "Open with" chooser between two installed
+                    // flavours). Without this the hand-off is both a UX dead end and a
+                    // hijacking surface.
+                    intent.setPackage(context.packageName)
+                }
                 context.startActivity(intent)
 
                 (context as? Activity)?.runOnUiThread {
