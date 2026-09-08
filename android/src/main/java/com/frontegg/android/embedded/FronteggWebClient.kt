@@ -449,8 +449,25 @@ class FronteggWebClient(
                 return true
             }
 
-            // The sign-up hand-off is dismissed the same way as the OAuth callback:
-            // hand the URL to the OS and finish, so the host app can present the flow.
+            // An `http(s)` link the host put in the login box footer — typically the
+            // Privacy Policy / Terms attribution Google's terms require when the
+            // reCAPTCHA badge is hidden. This WebView has no navigation chrome, so
+            // loading it in place would strand the user with no way back.
+            //
+            // Explicit rather than relying on the "terms"/"privacy" substring check
+            // above: that one is a coincidence for these URLs (it matches anywhere in
+            // the string, including a tenant name), and a footer link must keep working
+            // if it is ever narrowed. Unlike the hand-off below, this does NOT dismiss
+            // the box — the user reads the policy and comes back to a login screen
+            // still in place.
+            if (isFooterExternalUrl(url)) {
+                openExternalBrowser(url)
+                return true
+            }
+
+            // A footer link on the host's own scheme is a hand-off: dismissed the same
+            // way as the OAuth callback, handing the URL to the OS so the host app can
+            // present the flow.
             //
             // Needed as a separate condition because `deepLinkScheme` is optional —
             // an app that never configures one leaves it null, and then WebView has no
@@ -458,12 +475,12 @@ class FronteggWebClient(
             // ERR_UNKNOWN_URL_SCHEME and the box just sits there. Unlike iOS, whose
             // WKWebView navigation delegate routes any non-http scheme out to the OS,
             // Android only does what this method says.
-            val isSignUpHandoff = isSignUpHandoffUrl(url)
+            val isFooterHandoff = isFooterHandoffUrl(url)
             if (url.scheme.equals(storage.deepLinkScheme, ignoreCase = true) ||
-                isSignUpHandoff
+                isFooterHandoff
             ) {
                 val intent = Intent(Intent.ACTION_VIEW, url)
-                if (isSignUpHandoff) {
+                if (isFooterHandoff) {
                     // Scoped to this app. A custom scheme is not exclusive: any app can
                     // register it, and several build variants of the same app usually do
                     // (observed as an "Open with" chooser between two installed
@@ -506,23 +523,62 @@ class FronteggWebClient(
     }
 
     /**
-     * Whether [url] is the host's configured `loginBoxSignUpUrl` on a custom scheme.
+     * Whether [url] is a login box footer link on one of the host app's own schemes,
+     * i.e. a hand-off that should dismiss the box.
      *
-     * Compared by scheme rather than by exact string so URI normalisation between
-     * `location.assign` and [WebResourceRequest] cannot break the match. Restricted to
-     * non-`http(s)` schemes because an `http(s)` sign-up URL is meant to load INSIDE the
-     * box, not to dismiss it — only the app-scheme form is a hand-off.
+     * Compared by scheme rather than by exact string because the WebView normalises the
+     * URI on its way here — an `<a href="myapp://sign-up">` arrives as
+     * `myapp://sign-up/` — so an exact match would miss. Restricted to non-`http(s)`
+     * schemes; an `http(s)` footer link is handled by [isFooterExternalUrl] instead,
+     * which keeps the box mounted.
      *
-     * The value itself is already validated by `LoginBoxCustomization.sanitizedSignUpUrl`
-     * before it is injected, so a scheme reaching here has been checked against the
-     * host's own declared intent filters.
+     * Schemes reaching here have already been checked against the host's own declared
+     * intent filters by `LoginBoxCustomization.sanitizedFooter`.
      */
-    private fun isSignUpHandoffUrl(url: Uri): Boolean {
-        val configured = storage.loginBoxSignUpUrl
-        if (configured.isNullOrEmpty()) return false
-        val configuredScheme = Uri.parse(configured).scheme?.lowercase() ?: return false
-        if (configuredScheme == "http" || configuredScheme == "https") return false
-        return url.scheme?.lowercase() == configuredScheme
+    private fun isFooterHandoffUrl(url: Uri): Boolean {
+        val scheme = url.scheme?.lowercase() ?: return false
+        if (scheme == "http" || scheme == "https") return false
+
+        return footerLinkSchemes().contains(scheme)
+    }
+
+    /** Non-`http(s)` schemes used by the host's footer links. */
+    private fun footerLinkSchemes(): Set<String> {
+        val footer = storage.loginBoxFooter ?: return emptySet()
+        val sanitized = LoginBoxCustomization.sanitizedFooter(footer) { candidate ->
+            LoginBoxCustomization.hostAppHandles(context, candidate)
+        } ?: return emptySet()
+
+        val rows = sanitized.optJSONArray("rows") ?: return emptySet()
+        val schemes = mutableSetOf<String>()
+        for (i in 0 until rows.length()) {
+            val segments = rows.optJSONObject(i)?.optJSONArray("segments") ?: continue
+            for (j in 0 until segments.length()) {
+                val link = segments.optJSONObject(j)?.optString("url").orEmpty()
+                if (link.isEmpty()) continue
+                val scheme = Uri.parse(link).scheme?.lowercase() ?: continue
+                if (scheme != "http" && scheme != "https") schemes.add(scheme)
+            }
+        }
+        return schemes
+    }
+
+    /**
+     * Whether [url] is one of the `http(s)` links the host put in the login box footer.
+     *
+     * An exact allowlist rather than a general "host differs from the auth origin" rule,
+     * because the box legitimately navigates off-origin to social identity providers.
+     * A trailing slash is ignored on both sides, since the WebView adds one to a bare
+     * origin.
+     */
+    private fun isFooterExternalUrl(url: Uri): Boolean {
+        val configured = LoginBoxCustomization.footerExternalUrls(storage.loginBoxFooter)
+        if (configured.isEmpty()) return false
+
+        fun normalize(value: String) = value.trimEnd('/').lowercase()
+        val candidate = normalize(url.toString())
+
+        return configured.any { normalize(it) == candidate }
     }
 
     private val cache = WebResourceCache.getInstance(context)

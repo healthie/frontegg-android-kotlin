@@ -59,18 +59,31 @@ class FronteggInnerStorage {
         }
 
     /**
-     * Absolute `http(s)` URL the login box's sign-up link should open instead of the
-     * box's own sign-up route, for hosts that own their sign-up flow. `null` clears it.
+     * Content appended below the login box's card, on its login screen only.
+     * `null` clears it.
      *
-     * Only takes effect alongside [loginBoxLocalizations]
-     * (`loginBox.login.signUpLink` / `signUpMessage`), which is what makes the link
-     * render, and the box additionally requires `allowSignups` on the environment's
-     * public policy. Non-`http(s)` values are ignored.
+     * Structured rather than HTML — host strings are always rendered as text, never
+     * parsed as markup:
+     * ```
+     * mapOf(
+     *   "hideCaptchaBadge" to true,
+     *   "rows" to listOf(
+     *     mapOf("variant" to "body", "segments" to listOf(
+     *       mapOf("text" to "Don't have an account? "),
+     *       mapOf("label" to "Sign up now", "url" to "myapp://sign-up")
+     *     ))
+     *   )
+     * )
+     * ```
+     *
+     * `variant` is `"body"` or `"fine"` (small, de-emphasised legal text). Link URLs
+     * must be absolute `http(s)` or use a scheme the host app itself declares an intent
+     * filter for; anything else renders as plain text.
      */
-    var loginBoxSignUpUrl: String?
-        get() = volatileLoginBoxSignUpUrl
+    var loginBoxFooter: Map<String, Any?>?
+        get() = volatileLoginBoxFooter
         set(value) {
-            volatileLoginBoxSignUpUrl = value
+            volatileLoginBoxFooter = value
         }
 
     val handleLoginWithSSO: Boolean
@@ -155,6 +168,6 @@ class FronteggInnerStorage {
         private var volatileLoginBoxLocalizations: Map<String, Any?>? = null
 
         @Volatile
-        private var volatileLoginBoxSignUpUrl: String? = null
+        private var volatileLoginBoxFooter: Map<String, Any?>? = null
     }
 }
