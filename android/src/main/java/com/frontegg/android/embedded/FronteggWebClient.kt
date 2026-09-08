@@ -449,7 +449,18 @@ class FronteggWebClient(
                 return true
             }
 
-            if (url.scheme.equals(storage.deepLinkScheme, ignoreCase = true)) {
+            // The sign-up hand-off is dismissed the same way as the OAuth callback:
+            // hand the URL to the OS and finish, so the host app can present the flow.
+            //
+            // Needed as a separate condition because `deepLinkScheme` is optional —
+            // an app that never configures one leaves it null, and then WebView has no
+            // handler for a custom scheme at all: the navigation fails with
+            // ERR_UNKNOWN_URL_SCHEME and the box just sits there. Unlike iOS, whose
+            // WKWebView navigation delegate routes any non-http scheme out to the OS,
+            // Android only does what this method says.
+            if (url.scheme.equals(storage.deepLinkScheme, ignoreCase = true) ||
+                isSignUpHandoffUrl(url)
+            ) {
                 val intent = Intent(Intent.ACTION_VIEW, url)
                 context.startActivity(intent)
 
@@ -483,6 +494,26 @@ class FronteggWebClient(
         }
 
         return super.shouldOverrideUrlLoading(view, request)
+    }
+
+    /**
+     * Whether [url] is the host's configured `loginBoxSignUpUrl` on a custom scheme.
+     *
+     * Compared by scheme rather than by exact string so URI normalisation between
+     * `location.assign` and [WebResourceRequest] cannot break the match. Restricted to
+     * non-`http(s)` schemes because an `http(s)` sign-up URL is meant to load INSIDE the
+     * box, not to dismiss it — only the app-scheme form is a hand-off.
+     *
+     * The value itself is already validated by `LoginBoxCustomization.sanitizedSignUpUrl`
+     * before it is injected, so a scheme reaching here has been checked against the
+     * host's own declared intent filters.
+     */
+    private fun isSignUpHandoffUrl(url: Uri): Boolean {
+        val configured = storage.loginBoxSignUpUrl
+        if (configured.isNullOrEmpty()) return false
+        val configuredScheme = Uri.parse(configured).scheme?.lowercase() ?: return false
+        if (configuredScheme == "http" || configuredScheme == "https") return false
+        return url.scheme?.lowercase() == configuredScheme
     }
 
     private val cache = WebResourceCache.getInstance(context)
