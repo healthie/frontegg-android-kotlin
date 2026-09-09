@@ -49,16 +49,40 @@ object LoginBoxCustomization {
     )
 
     /**
+     * The login-box overrides as one value.
+     *
+     * The individual properties on [FronteggInnerStorage] remain the API for setting them.
+     * This is the single read path they feed, so call sites do not thread three arguments
+     * and three nil checks, and a fourth override would not have to touch every one of
+     * them — they are applied together by one injected script, so a partial application is
+     * not a meaningful operation anyway. Mirrors `LoginBoxCustomization.Overrides` on iOS.
+     */
+    data class Overrides(
+        val themeOptions: Map<String, Any?>? = null,
+        val localizations: Map<String, Any?>? = null,
+        val footer: Map<String, Any?>? = null,
+    ) {
+        /** True when the host set none of them, i.e. there is nothing to inject. */
+        val isEmpty: Boolean
+            get() = themeOptions == null && localizations == null && footer == null
+    }
+
+    /** The overrides the host set, read as one value. */
+    fun overrides(storage: FronteggInnerStorage): Overrides = Overrides(
+        themeOptions = storage.loginBoxThemeOptions,
+        localizations = storage.loginBoxLocalizations,
+        footer = storage.loginBoxFooter,
+    )
+
+    /**
      * Registers the overrides script, if the host set any. No-op (with a warning) on legacy
      * WebViews without [WebViewFeature.DOCUMENT_START_SCRIPT] — the same capability gate
      * [StepUpWebDriver] and the Admin Portal bridge use.
      */
     fun install(webView: WebView, storage: FronteggInnerStorage = FronteggInnerStorage()) {
-        val script = script(
-            storage.loginBoxThemeOptions,
-            storage.loginBoxLocalizations,
-            storage.loginBoxFooter
-        ) { scheme -> hostAppHandles(webView.context, scheme) } ?: return
+        val script = script(overrides(storage)) { scheme ->
+            hostAppHandles(webView.context, scheme)
+        } ?: return
 
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             Log.w(TAG, "DOCUMENT_START_SCRIPT unsupported; login box overrides not installed")
@@ -246,6 +270,16 @@ object LoginBoxCustomization {
      * Builds the document-start script, or `null` when there is nothing to override so
      * callers can skip injecting entirely.
      */
+    fun script(
+        overrides: Overrides,
+        handlesScheme: (String) -> Boolean = { false }
+    ): String? = script(
+        overrides.themeOptions,
+        overrides.localizations,
+        overrides.footer,
+        handlesScheme
+    )
+
     fun script(
         themeOptions: Map<String, Any?>?,
         localizations: Map<String, Any?>?,
